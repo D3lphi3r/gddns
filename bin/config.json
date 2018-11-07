@@ -1,0 +1,14 @@
+{
+"Host1":
+   {
+    "Username": "APIUser",
+    "Password": "APIPassword",
+    "Record": "test.example.com"
+    },
+"Host2":
+    {
+    "Username": "User2",
+    "Password": "Pass2",
+    "Record": "Record2"
+    }
+}

@@ -1,0 +1,261 @@
+program gddns;
+
+{$mode objfpc}{$H+}
+
+uses
+  {$IFDEF UNIX}{$IFDEF UseCThreads}
+  cthreads,
+  {$ENDIF}{$ENDIF}
+  Classes, SysUtils, CustApp, jsonparser, fpjson, IdHTTP;
+
+const
+  _ConfigFile  = 'config.json';
+  _PubIPURL    = 'https://domains.google.com/checkip';
+  _AppURL      = 'https://github.com/D3lphi3r/gddns';
+  _LogFile     = 'log.txt';
+  _APIURL      = 'https://domains.google.com/nic/update?hostname=$Record&myip=$PubIP';
+  _LogLine     = '=================================';
+  _paramlog    = 'logging';
+  _paramhelp   = 'help';
+  _paramDebug  = 'debug';
+  _paramRecrod = 'record';
+  _paramUser   = 'user';
+  _paramPass   = 'pass';
+  _version     = '1.0';
+
+type
+  { TGoogleDDNS }
+  TGoogleDDNS = class(TCustomApplication)
+  private
+    FPublicIP : string;
+    FIdHTTP   : TIdHTTP;
+    FLog      : TStringList;
+    FjData    : TJSONData;
+    FjItem    : TJSONData;
+    FPass     : string;
+    FUser     : string;
+    FHost     : string;
+    FDoLog    : Boolean;
+    FDebug    : Boolean;
+    function GetPublicIP(): string;
+    procedure UpdateRecord(const ARecord, AUser, APass: string);
+  protected
+    procedure DoRun; override;
+  public
+    constructor Create(TheOwner: TComponent); override;
+    destructor Destroy; override;
+    procedure WriteHelp; virtual;
+  end;
+
+
+{ TGoogleDDNS }
+
+function TGoogleDDNS.GetPublicIP(): string;
+begin
+  Result := '';
+  try
+   // Reading the public IP.
+   Result := FIdHTTP.Get(_PubIPURL);
+  except
+    On E: Exception Do begin
+      FLog.Add(DateTimeToStr(Now) + ' - Cant get the public IP :' + E.Message + sLineBreak + _LogLine);
+      WriteLn('Cant get the public IP :' + E.Message);
+    end;
+  end;
+end;
+
+procedure TGoogleDDNS.UpdateRecord(const ARecord, AUser, APass: string);
+var
+  LURL     : string;
+  Response : string;
+begin
+  LURL := StringReplace(_APIURL, '$Record', ARecord, []);
+  LURL := StringReplace(LURL, '$PubIP', FPublicIP, []);
+  FIdHTTP.Request.Username := AUser;
+  FIdHTTP.Request.Password := APass;
+  FIdHTTP.Request.BasicAuthentication := True;
+  if FDebug then Write('Updating', #32, ARecord,'...');
+  try
+    Response := FIdHTTP.Get(LURL);
+    if FDebug then WriteLn(Response);
+    FLog.Add(DateTimeToStr(Now) + ' - HTTP Response for ' + ARecord + ' :' + Response + sLineBreak + _LogLine);
+  except
+    On E: Exception Do begin
+      if FDebug then WriteLn('Cant update the record - Error:' + E.Message );
+      FLog.Add(DateTimeToStr(Now) + ' - Cant update the record - Error:' + E.Message + sLineBreak + _LogLine);
+    end;
+  end;
+end;
+
+procedure TGoogleDDNS.DoRun;
+var
+  ErrorMsg : String;
+  jText    : TStringList;
+  I, J     : Integer;
+  LName    : string;
+begin
+  // quick check parameters
+  ErrorMsg:=CheckOptions(_paramhelp[1]+_paramlog[1]+_paramDebug[1]+_paramRecrod[1]+':'+_paramUser[1]+':'+_paramPass[1]+':'
+  , _paramhelp+#32+_paramlog+#32+_paramDebug+#32+_paramRecrod+':'+#32+_paramUser+':'+#32+_paramPass+':');
+  if ErrorMsg<>'' then begin
+    ShowException(Exception.Create(ErrorMsg));
+    Terminate;
+    Exit;
+  end;
+
+  // parse parameters
+  if HasOption(_paramhelp[1], _paramhelp) then begin
+    WriteHelp;
+    Terminate;
+    Exit;
+  end;
+
+  if HasOption(_paramlog[1], _paramlog) then begin
+    // Enable loggin to text file.
+     FDoLog := True;
+  end;
+
+  if HasOption(_paramDebug[1], _paramDebug) then begin
+    // Enable output to the current console
+     FDebug := True;
+  end;
+
+  if HasOption(_paramRecrod[1], _paramRecrod) then begin
+     //Read the record from the command line arguments
+     FHost := GetOptionValue(_paramRecrod[1], _paramRecrod);
+  end;
+
+  if HasOption(_paramUser[1], _paramUser) then begin
+     //Read the user from the command line arguments
+     FUser := GetOptionValue(_paramUser[1], _paramUser);
+  end;
+
+  if HasOption(_paramPass[1], _paramPass) then begin
+     //Read the password from the command line arguments
+     FPass := GetOptionValue(_paramPass[1], _paramPass);
+  end;
+
+  //Reading the public IP.
+  if FDebug then Write('Getting the public IP...');
+  FPublicIP := GetPublicIP();
+  if Length(FPublicIP) = 0 then begin
+     Terminate;
+     Exit;
+  end;
+  if FDebug then WriteLn(FPublicIP);
+
+
+  if ( (Length(FHost) > 0) and (Length(FUser) > 0) and (Length(FPass) > 0) ) then begin
+     UpdateRecord(FHost, FUser, FPass);
+  end
+  else begin
+      if FDebug then Write('Parsing JSON data...');
+
+      //Reading the data from the JSON file.
+      jText := TStringList.Create;
+      try
+        jText.LoadFromFile(_ConfigFile);
+        try
+          // Parse the JSON data
+          FjData := GetJSON(jText.Text);
+          if FDebug then WriteLn('Found', #32, FjData.Count, #32, 'Records');
+          for I := 0 to FjData.Count - 1 do
+          begin
+            FjItem := FjData.Items[I];
+            for J := 0 to FjItem.Count-1 do
+            begin
+              LName := TJSONObject(FjItem).Names[J];
+              if SameText(LName, 'Username') then
+                 FUser := FjItem.FindPath(TJSONObject(FjItem).Names[J]).AsString;
+              if SameText(LName, 'Record') then
+                 FHost := FjItem.FindPath(TJSONObject(FjItem).Names[J]).AsString;
+              if SameText(LName, 'Password') then
+                 FPass := FjItem.FindPath(TJSONObject(FjItem).Names[J]).AsString;
+            end;
+
+            //Updating the recoreds.
+            if ( (Length(FUser) > 0) and (Length(FPass) > 0) and (Length(FHost) > 0) ) then begin
+               UpdateRecord(FHost, FUser, FPass);
+            end
+            else begin
+              // Missing data with the record founded
+              // ToDo later.
+            end;                                   end;
+        except
+          On E: Exception Do begin
+            if FDebug then WriteLn('Cant parse the JSON data:' + E.Message );
+            FLog.Add(DateTimeToStr(Now) + ' - Cant parse the JSON data:' + E.Message + sLineBreak + _LogLine);
+          end;
+        end;
+      finally
+        jText.Free;
+      end;
+  end;
+
+  // stop program loop
+  Terminate;
+end;
+
+constructor TGoogleDDNS.Create(TheOwner: TComponent);
+begin
+  inherited Create(TheOwner);
+  StopOnException:=True;
+  FIdHTTP   := TIdHTTP.Create(Self);
+  FLog      := TStringList.Create;
+  FDoLog    := False;
+  FPublicIP := '';
+end;
+
+destructor TGoogleDDNS.Destroy;
+begin
+  if Assigned(FjData) then
+     FjData.Free;
+  FIdHTTP.Free;
+  if FDoLog then
+     FLog.SaveToFile(_LogFile);
+  FLog.Free;
+  inherited Destroy;
+end;
+
+procedure TGoogleDDNS.WriteHelp;
+var
+  arg : string;
+  spl : string;
+  des : string;
+  tit : string;
+  I   : Integer;
+  und : string;
+begin
+  arg := '%-15s';
+  spl := '%5s';
+  des := '%-20s';
+  WriteLn(Title, #32 , 'v', _version);
+  WriteLn(_AppURL);
+  WriteLn('');
+  WriteLn(format(spl,['']) + format(arg,['Usage: ./' + ExtractFileName(ExeName) + #32 + '-r example.com -u apiUser -p apiPass']));
+  WriteLn(format(spl,['']) + format(arg,['By defult the applaction use the JSON file if no arguments (-r -u -p) are used.']));
+  WriteLn('');
+  tit := format(spl,['']) + format(arg,['Arguments']) + format(spl,['']) + format(des,['Description']);
+  WriteLn(tit);
+  und := '';
+  for I := 0 to Length(tit)-1 do und := und + '-';
+  WriteLn(format(spl,['']) + und);
+  WriteLn(format(spl,['']) + format(arg,['-'+_paramhelp[1] + ', --' + _paramhelp]) + format(spl,['']) + format(des,['Display this menu.']) );
+  WriteLn(format(spl,['']) + format(arg,['-'+_paramDebug[1] + ', --' + _paramDebug]) + format(spl,['']) + format(des,['Output to the current console.']) );
+  WriteLn(format(spl,['']) + format(arg,['-'+_paramlog[1] + ', --' + _paramlog]) + format(spl,['']) + format(des,['Output to text file => log.txt.']) );
+  WriteLn(format(spl,['']) + format(arg,['-'+_paramRecrod[1] + ', --' + _paramRecrod+'=']) + format(spl,['']) + format(des,['Record name.']) );
+  WriteLn(format(spl,['']) + format(arg,['-'+_paramUser[1] + ', --' + _paramUser+'=']) + format(spl,['']) + format(des,['API Username.']) );
+  WriteLn(format(spl,['']) + format(arg,['-'+_paramPass[1] + ', --' + _paramPass+'=']) + format(spl,['']) + format(des,['API Password.']) );
+  WriteLn('');
+
+end;
+
+var
+  Application: TGoogleDDNS;
+begin
+  Application:=TGoogleDDNS.Create(nil);
+  Application.Title:='Google DDNS';
+  Application.Run;
+  Application.Free;
+end.
+
