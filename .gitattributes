@@ -1,0 +1,4 @@
+* linguist-vendored
+*.ppr linguist-language=Pascal
+*.ctpr linguist-language=XML
+*.ctps linguist-language=XML
