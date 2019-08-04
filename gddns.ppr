@@ -154,7 +154,7 @@ begin
       //Reading the data from the JSON file.
       jText := TStringList.Create;
       try
-        jText.LoadFromFile(_ConfigFile);
+        jText.LoadFromFile( ExtractFilePath(ParamStr(0) ) + _ConfigFile );
         try
           // Parse the JSON data
           FjData := GetJSON(jText.Text);
@@ -212,7 +212,7 @@ begin
      FjData.Free;
   FIdHTTP.Free;
   if FDoLog then
-     FLog.SaveToFile(_LogFile);
+     FLog.SaveToFile(ExtractFilePath(ParamStr(0) ) + _LogFile);
   FLog.Free;
   inherited Destroy;
 end;
